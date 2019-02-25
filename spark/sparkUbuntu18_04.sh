@@ -77,7 +77,7 @@ echo "Creating Jupyter config file"
 jupyter notebook --generate-config
 cd ~/.jupyter/
 echo "c = get_config()" >> $J_CFG
-echo "c.NotebookApp.certfile = u'$HOME/$CERT/mycert.pem'" >> $J_CFG
+echo "c.NotebookApp.certfile = u'$HOME/$CERT/$CERT_NAME'" >> $J_CFG
 echo "c.NotebookApp.allow_origin = '*'" >> $J_CFG
 echo "c.NotebookApp.ip = '0.0.0.0'" >> $J_CFG
 echo "c.NotebookApp.open_browser = False" >> $J_CFG
