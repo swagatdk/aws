@@ -275,10 +275,4 @@ echo "  Public Subnet ID '%SUBNET_PUBLIC_APP_ID%' associated with Route Table ID
 ::
 goto:eof
 ::
-:dummy
-::
-echo %~1
-::
-goto:eof
-::
 :eof
