@@ -1,0 +1,489 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation script to create a CodePipeline comprising of CodeCommit Repository, CodeBuild Project and CodeDeploy on lambda for Linux Envirnoment  
+             
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups: 
+      -             
+        Label:
+          default: "S3 Details"
+        Parameters:
+          - S3BucketForArtifact
+          - S3PathForCache
+          - S3BucketForInitCode
+          - S3PathForInitCode      
+
+Parameters:  
+  S3BucketForArtifact:
+    Description: The name of the S3 bucket to store artifacts of source and build stages of CodePipeline 
+    Type: String
+  S3PathForCache:
+    Description: The name of the bucket and prefix in "S3 bucket name/prefix" format to store cache
+    Type: String   
+  S3BucketForInitCode:  
+    Description: The name of the S3 bucket where the initial version of the code is stored
+    Type: String
+  S3PathForInitCode:  
+    Description: The object key with prefix for the zip archive of the initial version of the code
+    Type: String  
+  
+Resources:  
+
+  CloudWatchEventRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - events.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: cwe-pipeline-execution
+        PolicyDocument:
+          Statement:
+          - Action: "codepipeline:StartPipelineExecution"
+            Resource: "*"
+            Effect: Allow
+          Version: '2012-10-17'
+      RoleName: !Sub 'lambda-${AWS::StackName}-cwe-role' 
+      Tags:
+      - Key: created-4
+        Value: !Sub 'lambda-${AWS::StackName}'
+
+  CodePipelineExecRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - codepipeline.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: codepipeline-service
+        PolicyDocument:
+          Statement:
+          - Action:
+            - codecommit:GetBranch
+            - codecommit:GetCommit
+            - codecommit:UploadArchive
+            - codecommit:GetUploadArchiveStatus
+            - codecommit:CancelUploadArchive
+            - codebuild:*
+            Resource: "*"
+            Effect: Allow
+          - Action:
+            - s3:GetObject
+            - s3:GetObjectVersion
+            - s3:GetBucketVersioning
+            Resource: "*"
+            Effect: Allow
+          - Action:
+            - s3:PutObject
+            Resource:
+            - arn:aws:s3:::codepipeline*
+            - arn:aws:s3:::elasticbeanstalk*
+            Effect: Allow
+          - Action:
+            - codedeploy:CreateDeployment
+            - codedeploy:GetApplicationRevision
+            - codedeploy:GetDeployment
+            - codedeploy:GetDeploymentConfig
+            - codedeploy:RegisterApplicationRevision
+            Resource: "*"
+            Effect: Allow
+          - Action:
+            - elasticbeanstalk:*
+            - ec2:*
+            - elasticloadbalancing:*
+            - autoscaling:*
+            - cloudwatch:*
+            - s3:*
+            - sns:*
+            - cloudformation:*
+            - rds:*
+            - sqs:*
+            - ecs:*
+            - iam:PassRole
+            Resource: "*"
+            Effect: Allow
+          - Action:
+            - lambda:InvokeFunction
+            - lambda:ListFunctions
+            Resource: "*"
+            Effect: Allow
+          Version: '2012-10-17'
+      RoleName: !Sub 'lambda-${AWS::StackName}-cp-role'
+      Tags:
+      - Key: created-4
+        Value: !Sub 'lambda-${AWS::StackName}'
+
+  CodeBuildExecRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - codebuild.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: codebuild-service
+        PolicyDocument:
+          Statement:            
+          - Action:            
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents            
+            Resource: 
+            - !Sub "arn:aws:logs:ap-south-1:${AWS::AccountId}:/aws/codebuild/lambda-${AWS::StackName}-cb-prj"
+            - !Sub "arn:aws:logs:ap-south-1:${AWS::AccountId}:log-group:/aws/codebuild/lambda-${AWS::StackName}-cb-prj:*"
+            Effect: Allow
+          - Action:
+            - s3:PutObject
+            - s3:GetObject
+            - s3:GetObjectVersion
+            - s3:GetBucketAcl
+            - s3:GetBucketLocation            
+            Resource:               
+              - Fn::Join:   
+                - ''           
+                - - 'arn:aws:s3:::'
+                  - !Ref S3BucketForArtifact
+                  - /*
+              - Fn::Join:  
+                - ''            
+                - - 'arn:aws:s3:::'
+                  - !Ref S3PathForCache
+                  - /*  
+            Effect: Allow
+          - Action:            
+            - codecommit:GitPull
+            Resource: 
+            - !Sub "arn:aws:codecommit:ap-south-1:${AWS::AccountId}:lambda-${AWS::StackName}-repo"
+            Effect: Allow            
+          Version: '2012-10-17'
+      ManagedPolicyArns: 
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser
+      RoleName: !Sub 'lambda-${AWS::StackName}-cb-role'
+      Tags:
+      - Key: created-4
+        Value: !Sub 'lambda-${AWS::StackName}'
+
+  CodeDeployCloudFormationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - cloudformation.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: cloudformation-service
+        PolicyDocument:
+          Statement:
+          - Action: 
+            - cloudformation:DescribeStacks
+            - cloudformation:DescribeStackEvents
+            - cloudformation:DescribeStackResource
+            - cloudformation:DescribeStackResources
+            - cloudformation:ExecuteChangeSet
+            - cloudformation:CreateStack
+            - cloudformation:GetTemplate
+            - cloudformation:ValidateTemplate
+            - cloudformation:CreateChangeSet
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            - lambda:GetFunctionConfiguration
+            - lambda:GetFunction           
+            - lambda:UpdateFunctionCode           
+            - lambda:InvokeAsync             
+            - lambda:InvokeFunction        
+            - lambda:CreateFunction 
+            - lambda:DeleteFunction             
+            - iam:PassRole
+            - s3:PutObject
+            - s3:GetObject
+            - ec2:*
+            Resource: "*"
+            Effect: Allow
+          Version: '2012-10-17'
+      RoleName: !Sub 'lambda-${AWS::StackName}-cf4cd-role'
+      Tags:
+      - Key: created-4
+        Value: !Sub 'lambda-${AWS::StackName}'  
+
+  LambdaExecRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: lambda-execution-role
+        PolicyDocument:
+          Statement:
+          - Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            - ec2:CreateNetworkInterface
+            - ec2:DescribeNetworkInterfaces
+            - ec2:DetachNetworkInterface
+            - ec2:DeleteNetworkInterface
+            Resource: "*"
+            Effect: Allow
+          Version: '2012-10-17'
+      RoleName: !Sub 'lambda-${AWS::StackName}-exec-role'
+      Tags:
+      - Key: created-4
+        Value: !Sub 'lambda-${AWS::StackName}'
+
+  CodeCommitRepo:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryName: !Sub 'lambda-${AWS::StackName}-repo'      
+      RepositoryDescription: CodeCommit Repository for lambda      
+      Code:
+        S3:
+          Bucket: !Ref S3BucketForInitCode
+          Key: !Ref S3PathForInitCode
+      Tags:
+      - Key: created-4
+        Value: !Sub 'lambda-${AWS::StackName}'
+
+  CloudWatchEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern:
+        detail-type:
+        - CodeCommit Repository State Change
+        source:
+        - aws.codecommit
+        resources:
+          -
+            Fn::Join:
+            - ''
+            - - 'arn:aws:codecommit:'
+              - Ref: AWS::Region
+              - ':'
+              - Ref: AWS::AccountId
+              - ':lambda-'
+              - Ref: AWS::StackName
+              - "-repo"
+        detail:
+          event:
+            - referenceUpdated
+          referenceType:
+            - branch
+          referenceName:
+            - master
+      Targets: 
+        - 
+          Arn:
+            Fn::Join:
+            - ''
+            - - 'arn:aws:codepipeline:'
+              - Ref: AWS::Region
+              - ':'
+              - Ref: AWS::AccountId
+              - ':lambda-'
+              - Ref: AWS::StackName
+              - '-cp'      
+          Id: "Pipeline"
+          RoleArn: !GetAtt CloudWatchEventRole.Arn
+
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    DependsOn: CodeBuildExecRole
+    Properties:
+      Name: !Sub 'lambda-${AWS::StackName}-cb-prj'
+      Description: CodeBuild Projet for lambda deployment CodePipeline
+      Cache:
+        Location: !Ref S3PathForCache
+        Type: S3
+      ServiceRole:
+        Fn::GetAtt:
+        - CodeBuildExecRole
+        - Arn
+      Artifacts:
+        Type: no_artifacts
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:1.0
+      Source:
+        Location:
+          Fn::Join:
+          - ''
+          - - https://git-codecommit.
+            - Ref: AWS::Region
+            - ".amazonaws.com/v1/repos/"
+            - "lambda-"
+            - Ref: AWS::StackName
+            - "-repo"
+        Type: CODECOMMIT
+      TimeoutInMinutes: 10
+      Tags:
+      - Key: created-4
+        Value: !Sub 'lambda-${AWS::StackName}'  
+  
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    DependsOn: CodeBuildProject
+    Properties:
+      RoleArn:
+        Fn::Join:
+        - ''
+        - - 'arn:aws:iam::'
+          - Ref: AWS::AccountId
+          - ":role/"
+          - Ref: CodePipelineExecRole
+      Name: !Sub 'lambda-${AWS::StackName}-cp'
+      Stages:
+      - Name: Source
+        Actions:
+        - InputArtifacts: []
+          Name: Source
+          ActionTypeId:
+            Category: Source
+            Owner: AWS
+            Version: '1'
+            Provider: CodeCommit
+          OutputArtifacts:
+          - Name: SourceArtifacts
+          Configuration:
+            BranchName: master              
+            RepositoryName: !Sub 'lambda-${AWS::StackName}-repo'
+            PollForSourceChanges: false
+          RunOrder: 1      
+
+      - Name: Build
+        Actions:
+        - InputArtifacts:
+          - Name: SourceArtifacts
+          Name: Build
+          ActionTypeId:
+            Category: Build
+            Owner: AWS
+            Version: '1'
+            Provider: CodeBuild
+          OutputArtifacts:
+          - Name: BuildArtifacts
+          Configuration:
+            ProjectName: !Sub 'lambda-${AWS::StackName}-cb-prj'
+          RunOrder: 1
+
+      - Name: Deploy
+        Actions:
+        - InputArtifacts:
+          - Name: BuildArtifacts
+          Name: Create-Child-Stack
+          ActionTypeId:
+            Category: Deploy
+            Owner: AWS
+            Version: '1'
+            Provider: CloudFormation
+          OutputArtifacts: []
+          Configuration:
+            ActionMode: CHANGE_SET_REPLACE
+            ChangeSetName: !Sub 'lambda-${AWS::StackName}-cd-changeset' 
+            RoleArn:
+                Fn::Join:
+                - ''
+                - - 'arn:aws:iam::'
+                  - Ref: AWS::AccountId
+                  - ":role/"
+                  - Ref: CodeDeployCloudFormationRole           
+            Capabilities: CAPABILITY_IAM
+            StackName: !Sub 'lambda-${AWS::StackName}-cd-changeset-stack'
+            TemplatePath: 'BuildArtifacts::outputtemplate.yml'
+          RunOrder: 1
+        - InputArtifacts:
+          - Name: BuildArtifacts
+          Name: Execute-Child-Stack
+          ActionTypeId:
+            Category: Deploy
+            Owner: AWS
+            Version: '1'
+            Provider: CloudFormation
+          OutputArtifacts: []
+          Configuration:
+            ActionMode: CHANGE_SET_EXECUTE
+            ChangeSetName: !Sub 'lambda-${AWS::StackName}-cd-changeset'    
+            RoleArn:
+                Fn::Join:
+                - ''
+                - - 'arn:aws:iam::'
+                  - Ref: AWS::AccountId
+                  - ":role/"
+                  - Ref: CodeDeployCloudFormationRole        
+            Capabilities: CAPABILITY_IAM
+            StackName: !Sub 'lambda-${AWS::StackName}-cd-changeset-stack'
+          RunOrder: 2
+      ArtifactStore:
+        Type: S3
+        Location:
+          Ref: S3BucketForArtifact      
+    
+Outputs:
+  CodePipelineUrl:
+    Value:
+      Fn::Join:
+      - ''
+      - - https://console.aws.amazon.com/codepipeline/home?region=
+        - Ref: AWS::Region
+        - "#/view/"
+        - Ref: CodePipeline
+    Description: CodePipeline URL
+  CodeBuildProjectUrl:
+    Value:
+      Fn::Join:
+      - ''
+      - - https://console.aws.amazon.com/codebuild/home?region=
+        - Ref: AWS::Region
+        - "#/view/"
+        - Ref: CodeBuildProject
+    Description: CodeBuild URL
+  CodeDeployURL:
+    Value:
+      Fn::Join:
+      - ''
+      - - https://console.aws.amazon.com/codedeploy/home?region=
+        - Ref: AWS::Region
+        - "#/deployments/"
+    Description: CodeDeploy URL  
+  CodeCommitUrl:
+    Value:
+      Fn::Join:
+      - ''
+      - - "https://git-codecommit."
+        - Ref: AWS::Region
+        - ".amazonaws.com/v1/repos/"
+        - "lambda-"
+        - Ref: AWS::StackName
+        - "-repo"
+        - "/"
+    Description: CodeCommit URL
