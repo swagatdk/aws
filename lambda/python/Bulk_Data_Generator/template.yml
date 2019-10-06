@@ -6,7 +6,7 @@ Resources:
   LambdaFunction:    
     Type: AWS::Serverless::Function    
     Properties:    
-      Handler: bulk_data_gen.lambda_handler  
+      Handler: functionality.lambda_handler  
       Runtime: python3.7   
       FunctionName: Bulk_data_generator 
       MemorySize : 256  
