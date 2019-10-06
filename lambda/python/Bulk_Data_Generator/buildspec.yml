@@ -1,0 +1,46 @@
+version: 0.2      
+      
+#env:
+   #variables:
+      # key: "value"
+      # key: "value"
+     
+   #parameter-store:
+      # key: "value"
+      # key: "value"
+ 
+#proxy:
+   # upload-artifacts: yes
+   # logs: yes
+
+phases:      
+  install:      
+    runtime-versions:      
+      python: 3.7   
+  
+  pre_build:
+    commands:      
+      - aws --version 
+      - python -V 
+      - pip -V
+      - export OLD_DIR=`pwd`
+      - python -m venv venv 
+      - source venv/bin/activate  
+           
+  build:      
+    commands:                 
+      - pip install -r requirements.txt    
+      - cd venv/lib/python3.7/site-packages
+      - zip -r9 ${OLD_DIR}/function.zip .  
+      - cd ${OLD_DIR}  
+      - zip -g function.zip bulk_data_gen.py defaults.py
+           
+  post_build:      
+    commands:   
+      - export BUCKET=sdk-poc-mum-cp-artifacts  
+      - aws cloudformation package --template-file template.yml --s3-bucket $BUCKET --output-template-file outputtemplate.yml     
+           
+artifacts:      
+  files:      
+    - function.zip    
+    - outputtemplate.yml   

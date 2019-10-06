@@ -1,0 +1,34 @@
+{
+  "num_rows": 2000,
+  "output_format": "json",
+  "columns": [
+    {
+    "column_name":"Customer Name",
+    "faker_method":"name"
+    },
+    {
+      "column_name":"Address",
+      "faker_method":"address"
+    },
+    {
+      "column_name":"Phone Number",
+      "faker_method":"phone_number"
+    },
+    {
+      "column_name":"Date of Birth",
+      "faker_method":"date",
+      "faker_method_param":"pattern='%d-%m-%Y', end_datetime=datetime.date(2000, 1,1)",
+      "null_percent":"10"
+    },
+    {
+      "column_name":"Email ID",
+      "faker_method":"email",      
+      "null_percent":"30"
+    },
+    {
+      "column_name":"Website",
+      "faker_method":"url",      
+      "null_percent":"80"
+    }
+  ]
+}

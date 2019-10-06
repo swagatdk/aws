@@ -1,0 +1,22 @@
+AWSTemplateFormatVersion: '2010-09-09'    
+Transform: AWS::Serverless-2016-10-31    
+Description: Creates lambda function   
+    
+Resources:    
+  LambdaFunction:    
+    Type: AWS::Serverless::Function    
+    Properties:    
+      Handler: bulk_data_gen.lambda_handler  
+      Runtime: python3.7   
+      FunctionName: Bulk_data_generator 
+      MemorySize : 256  
+      Timeout : 30   
+      CodeUri: ./function.zip   
+      Role: arn:aws:iam::982723818678:role/lambda-python-bulk-data-gen-exec-role       
+      VpcConfig:    
+        SecurityGroupIds:    
+          - sg-0b4ad63b08b4921e0                  
+        SubnetIds:  
+          - subnet-03b0c6f9220246ff8  
+          - subnet-0a3cb3aede1b76be1
+          - subnet-010469bf031d9145a  
