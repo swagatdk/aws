@@ -33,7 +33,7 @@ phases:
       - cd venv/lib/python3.7/site-packages
       - zip -r9 ${OLD_DIR}/function.zip .  
       - cd ${OLD_DIR}  
-      - zip -g function.zip bulk_data_gen.py defaults.py
+      - zip -g function.zip functionality.py defaults.py
            
   post_build:      
     commands:   
