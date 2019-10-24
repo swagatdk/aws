@@ -9,6 +9,7 @@ import logging
 import boto3
 import uuid
 import faker 
+import dicttoxml
 from botocore.exceptions import ClientError
 
 # Importing custom modules
@@ -17,13 +18,14 @@ from defaults import *
 # Setting print level and other varidables
 verbose = False
 status_code = status_code_success
-called_from = ''
 
 # Initialising the boto3 client for S3 
 s3_client = boto3.client('s3')
-
-# Function to write output rows to destination
-def write_data(output_rows, output_format, output_folder_location, column_names):
+ 
+def write_data(output_rows, output_format, output_folder_location, column_names, called_from = called_from_lambda):
+    '''
+    Function to write output rows to destination
+    '''
     if verbose:
         print("Entry into write_data()")
 
@@ -45,11 +47,16 @@ def write_data(output_rows, output_format, output_folder_location, column_names)
             with open(write_path, 'w') as jsonfile:
                 json.dump(output_rows, jsonfile)
         elif output_format.upper() == "CSV":
-            with open(write_path, 'w') as csvfile:
+            with open(write_path, 'w', newline='') as csvfile:
                 writer = csv.DictWriter(csvfile, fieldnames = column_names)
                 writer.writeheader()
                 for data in output_rows:
                     writer.writerow(data)
+        elif output_format.upper() == "XML":            
+            xml_bytes = dicttoxml.dicttoxml(output_rows)            
+            xml_string = xml_bytes.decode("utf-8")            
+            with open(write_path, "w") as xmlfile:
+                 xmlfile.write(xml_string)
         else:
             print("Invalid format")
             status_code = status_code_failure 
@@ -80,10 +87,12 @@ def write_data(output_rows, output_format, output_folder_location, column_names)
     except Exception as e:
         print(e)
         return status_code_failure    
-
-# Function to take the inputs as variables and generate the output as list of dict
-# Each dict is one row 
-def faker_wrapper(num_rows, locale, output_format, column_names, faker_methods, faker_method_params, null_percent, output_folder_location):
+ 
+def faker_wrapper(num_rows, locale, output_format, column_names, faker_methods, faker_method_params, null_percent, output_folder_location, called_from = called_from_lambda):
+    '''
+    Function to take the inputs as variables and generate the output as list of dict
+    Each dict is one row
+    '''
     if verbose:
         print("Entry into faker_wrapper()")
 
@@ -92,6 +101,8 @@ def faker_wrapper(num_rows, locale, output_format, column_names, faker_methods, 
     fake = faker.Faker(locale)
 
     if num_rows > 100000:
+        print_every = 10000
+    elif num_rows > 10000:
         print_every = 5000
     else:
         print_every = 1000
@@ -100,33 +111,38 @@ def faker_wrapper(num_rows, locale, output_format, column_names, faker_methods, 
         # In a loop generate all rows
         for i in range(num_rows):
 
-            if verbose and i > 0 and i % 1000 == 0: 
+            if i > 0 and i % print_every == 0: 
                 print (f"Total row = {num_rows}, generated = {i}")
 
             # For each row, in a loop, generate data for all columns
             output_rows.append({})
             for j in range(num_cols):
-                method_to_call = getattr(fake, faker_methods[j])
-                '''if faker_method_params[j]:
-                    result = method_to_call(faker_method_params[j]) 
+                method_to_call = getattr(fake, faker_methods[j])       
+                if verbose:
+                    print(method_to_call)
+                '''if faker_method_params[j]:                    
+                    kwargs = eval("{"+faker_method_params[j]+"}")                    
+                    result = method_to_call(**kwargs)
                 else:  
-                    result = method_to_call()'''   
-                result = method_to_call()      
-                output_rows[i].update({column_names[j]: result})    
+                    result = method_to_call()'''                
+                result = method_to_call()                 
+                output_rows[i].update({column_names[j]: result.replace('\n', ' ').replace('\r', '')})    
 
         if verbose:
             print("First output row = " + str(output_rows[0]))
 
         # Call write_data with output and destination
-        status_code = write_data(output_rows, output_format, output_folder_location, column_names)
+        status_code = write_data(output_rows, output_format, output_folder_location, column_names, called_from)
     except Exception as e:
         print(e)
         status_code = status_code_failure  
 
     return status_code
 
-# Function to take the locations and get the config parameters to call faker_wrapper
-def data_gen(config_file_location, output_folder_location):
+def data_gen(config_file_location, output_folder_location, called_from = called_from_lambda):
+    '''
+    Function to take the locations and get the config parameters to call faker_wrapper
+    '''
     if verbose:
         print("Entry into data_gen()")
 
@@ -193,9 +209,9 @@ def data_gen(config_file_location, output_folder_location):
         num_rows = round(max_cell_limit/(len(column_names) + 1))
         print("Reduced the num_rows to " + str(num_rows))
 
-    if num_rows > 0 and output_format.upper() in ['CSV', 'JSON'] and len(column_names) > 0 and len(column_names) == len(faker_methods) \
+    if num_rows > 0 and output_format.upper() in ['CSV', 'JSON', 'XML'] and len(column_names) > 0 and len(column_names) == len(faker_methods) \
             and len(faker_methods) == len(faker_method_params) and len(column_names) == len(null_percents):
-        status_code = faker_wrapper(num_rows, locale, output_format, column_names, faker_methods, faker_method_params, null_percents, output_folder_location)
+        status_code = faker_wrapper(num_rows, locale, output_format, column_names, faker_methods, faker_method_params, null_percents, output_folder_location, called_from)
     else:
         print("Invalid config parameters")
         print("num_rows = " + str(num_rows))
@@ -210,13 +226,21 @@ def data_gen(config_file_location, output_folder_location):
     return status_code
 
 def lambda_handler(event, context):
+    '''
+    The lambda handler function to generate bulk data using faker package of python
+    Within it's event parameter, it takes two input
+        Input 1 : path of the config_file 
+        Input 2 : location where the output file would be generated
+    Both the locations must follow S3://bucketname/prefix/filename format
+    The config file must be in json 
+    The generated output can be in json, csv or xml.
+    '''
     if verbose:
         print("Entry into lambda_handler()")
         print("Boto3 version = " + boto3.__version__)
         print("Faker version = " + faker.VERSION) 
 
     # Set the calling point
-    global called_from 
     called_from = called_from_lambda  
 
     try:
@@ -232,11 +256,11 @@ def lambda_handler(event, context):
 
         if not config_file_location or not config_file_location.upper().endswith('.JSON'):
             print("Invalid config file!")
-            raise ValueError("Invalid config file!") 
+            raise Exception("Invalid config file!") 
 
         # Verify both locations are on S3 else return error
         if (config_file_location.startswith("s3://" or "S3://") and output_folder_location.startswith("s3://" or "S3://")):        
-            status_code = data_gen(config_file_location, output_folder_location)                 
+            status_code = data_gen(config_file_location, output_folder_location, called_from)                 
         else:
             print("Invalid input; please provide locations on AWS s3")
             status_code = status_code_failure
@@ -250,13 +274,22 @@ def lambda_handler(event, context):
         return status_msg_failure
 
 def main():
+    '''
+    The main function to generate bulk data locally using faker package of python
+    It takes two input
+        Input 1 : path of the config_file 
+        Input 2 : location where the output file would be generated
+    Both the input can be local or in S3. If in S3, both 
+    the locations must follow S3://bucketname/prefix/filename format.
+    The config file must be in json.
+    The generated output can be in json, csv or xml. 
+    '''
     if verbose:
         print("Entry into main()")
         print("Boto3 version = " + boto3.__version__)
         print("Faker version = " + faker.VERSION)
 
-    # Set the calling point
-    global called_from
+    # Set the calling point    
     called_from = called_from_main
 
     print("Please enter the locations of config file and output folder.")
@@ -278,7 +311,7 @@ def main():
             raise ValueError("Invalid config file!")
 
         # Call data_gen function with the locations    
-        status_code = data_gen(config_file_location, output_folder_location)
+        status_code = data_gen(config_file_location, output_folder_location, called_from)
     except Exception as e:
         print(e)
         status_code = status_code_failure
